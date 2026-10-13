@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { ArrowUp, LoaderCircle } from "lucide-react";
 
 interface ChatInputProps {
@@ -6,46 +6,79 @@ interface ChatInputProps {
   isLoading: boolean;
 }
 
+const MAX_LENGTH = 10_000;
+
 export default function ChatInput({ onSend, isLoading }: ChatInputProps) {
   const [message, setMessage] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  const canSend = message.trim().length > 0 && !isLoading;
+
+  function resizeTextarea() {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+    textarea.style.overflowY = textarea.scrollHeight > 200 ? "auto" : "hidden";
+  }
+
+  function handleChange(value: string) {
+    setMessage(value.slice(0, MAX_LENGTH));
+    requestAnimationFrame(resizeTextarea);
+  }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    const trimmed = message.trim();
+    const trimmedMessage = message.trim();
 
-    if (!trimmed || isLoading) return;
+    if (!trimmedMessage || isLoading) return;
 
-    onSend(trimmed);
+    onSend(trimmedMessage);
     setMessage("");
+
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.overflowY = "hidden";
+    }
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (
+      event.key === "Enter" &&
+      !event.shiftKey &&
+      !event.nativeEvent.isComposing
+    ) {
+      event.preventDefault();
+      formRef.current?.requestSubmit();
+    }
   }
 
   return (
-    <form className="composer" onSubmit={handleSubmit}>
+    <form ref={formRef} className="composer" onSubmit={handleSubmit}>
       <textarea
-        value={message}
-        onChange={(event) => setMessage(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey) {
-            event.preventDefault();
-            event.currentTarget.form?.requestSubmit();
-          }
-        }}
-        placeholder="Message your AI assistant..."
+        ref={textareaRef}
         aria-label="Message your AI assistant"
-        rows={1}
-        maxLength={10000}
+        placeholder="Message your AI assistant..."
+        value={message}
+        onChange={(event) => handleChange(event.target.value)}
+        onKeyDown={handleKeyDown}
         disabled={isLoading}
+        maxLength={MAX_LENGTH}
+        rows={1}
       />
 
       <button
-        className="send-button"
         type="submit"
-        disabled={isLoading || !message.trim()}
-        aria-label="Send message"
+        className="send-button"
+        aria-label={isLoading ? "Sending message" : "Send message"}
+        title={isLoading ? "Sending message..." : "Send message"}
+        disabled={!canSend}
       >
         {isLoading ? (
-          <LoaderCircle size={19} className="spin" />
+          <LoaderCircle className="spin" size={19} />
         ) : (
           <ArrowUp size={20} />
         )}

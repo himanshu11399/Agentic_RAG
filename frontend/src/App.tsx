@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Menu, Sparkles, SquarePen } from "lucide-react";
+import { Menu, Sparkles, SquarePen, Square } from "lucide-react";
 
 import ChatMessage from "./components/ChatMessage";
 import type { Message } from "./components/ChatMessage.types";
@@ -14,7 +14,9 @@ export default function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(
+    () => window.matchMedia("(min-width: 768px)").matches,
+  );
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const requestRef = useRef<AbortController | null>(null);
@@ -37,7 +39,9 @@ export default function App() {
     setError("");
     setIsLoading(false);
   }
-
+  function stopGenerating() {
+    requestRef.current?.abort();
+  }
   async function requestReply(content: string, history: Message[]) {
     if (requestRef.current) return;
 
@@ -130,7 +134,24 @@ export default function App() {
   return (
     <div className="app-shell">
       {sidebarOpen && (
-        <Sidebar onNewChat={newChat} onClose={() => setSidebarOpen(false)} />
+        <>
+          <button
+            className="sidebar-backdrop"
+            aria-label="Close sidebar overlay"
+            onClick={() => setSidebarOpen(false)}
+          />
+
+          <Sidebar
+            onNewChat={() => {
+              newChat();
+
+              if (window.matchMedia("(max-width: 767px)").matches) {
+                setSidebarOpen(false);
+              }
+            }}
+            onClose={() => setSidebarOpen(false)}
+          />
+        </>
       )}
 
       <main className="chat-main">
@@ -199,6 +220,16 @@ export default function App() {
               <span className="typing-dot" />
               <span className="typing-dot" />
               <span>Thinking...</span>
+
+              <button
+                type="button"
+                className="stop-generating-button"
+                onClick={stopGenerating}
+                aria-label="Stop generating"
+              >
+                <Square size={13} />
+                <span>Stop</span>
+              </button>
             </div>
           )}
 

@@ -77,7 +77,9 @@ describe("App chat flow", () => {
       await screen.findByText("This message will be cleared."),
     ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /new chat/i }));
+    await user.click(
+      screen.getAllByRole("button", { name: "New chat" }).at(-1)!,
+    );
 
     await waitFor(() => {
       expect(
