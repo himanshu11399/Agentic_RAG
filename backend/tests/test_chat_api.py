@@ -7,12 +7,17 @@ from langchain_core.messages import AIMessage
 
 from app.api import chat as chat_module
 from app.main import app
+from app.api.dependencies import get_current_user
 
 import os
 
 os.environ.setdefault("GROQ_API_KEY", "test-key-not-used")
 
 client = TestClient(app)
+app.dependency_overrides[get_current_user] = lambda: {
+    "user_id": "user_test_123",
+    "claims": {"sub": "user_test_123"},
+}
 
 
 class FakeChatbotGraph:
@@ -66,9 +71,11 @@ def test_chat_returns_assistant_reply(fake_graph):
     )
 
     assert response.status_code == 200
-    assert response.json() == {
-        "reply": "Hello from the test assistant."
-    }
+    data = response.json()
+
+    assert data["reply"] == "Hello from the test assistant."
+    assert isinstance(data["conversation_id"], str)
+    assert len(data["conversation_id"]) > 0
 
     assert fake_graph.last_state is not None
     assert fake_graph.last_state["messages"][-1].content == "Hello"

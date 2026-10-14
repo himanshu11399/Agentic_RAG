@@ -10,6 +10,15 @@ class Setting:
     GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
     GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
     
+    # Clerk authentication configuration.
+    CLERK_ISSUER = os.getenv("CLERK_ISSUER", "").strip()
+    CLERK_JWKS_URL = os.getenv("CLERK_JWKS_URL", "").strip()
+    
+    CLERK_AUDIENCE = os.getenv("CLERK_AUDIENCE", "").strip()
+    
+    DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+    
+    
     def validate_settings(self) -> None:
         if not self.GROQ_API_KEY:
             raise ValueError("GROQ_API_KEY is not set")

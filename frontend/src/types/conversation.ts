@@ -4,6 +4,7 @@ export interface Conversation {
   id: string;
   title: string;
   messages: Message[];
+  backendId?: string;
   createdAt: number;
   updatedAt: number;
 }

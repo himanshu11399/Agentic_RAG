@@ -934,3 +934,43 @@ body,
 .conversation-rename-input:focus {
   box-shadow: 0 0 0 2px rgb(118 171 174 / 20%);
 }
+.auth-screen {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  padding: 24px;
+  background: #222831;
+  color: #eeeeee;
+}
+
+.auth-brand {
+  text-align: center;
+}
+
+.auth-brand h1 {
+  margin: 0 0 8px;
+  font-size: 30px;
+}
+
+.auth-brand p {
+  margin: 0;
+  color: #b5bdc9;
+}
+
+.auth-switch {
+  margin: 0;
+  color: #b5bdc9;
+  font-size: 14px;
+}
+
+.auth-switch button {
+  border: none;
+  background: transparent;
+  color: #76abae;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}

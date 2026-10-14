@@ -1,15 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 import { Menu, Sparkles, SquarePen, Square } from "lucide-react";
 
+import { useAuth } from "@clerk/react";
+import AuthScreen from "./components/AuthScreen";
+
 import ChatMessage from "./components/ChatMessage";
 import type { Message } from "./components/ChatMessage.types";
 import ChatInput from "./components/ChatInput";
 import Sidebar from "./components/Sidebar";
-import { sendMessage } from "./services/chatApi";
 import {
-  loadConversations,
-  saveConversations,
-} from "./services/conversationStorage";
+  createConversation as createServerConversation,
+  deleteConversation,
+  getConversationMessages,
+  listConversations,
+  renameConversation,
+  sendMessage,
+} from "./services/chatApi";
+import { saveConversations } from "./services/conversationStorage";
 import type { Conversation } from "./types/conversation";
 import "./App.css";
 
@@ -37,22 +44,101 @@ function createTitle(message: string): string {
 }
 
 export default function App() {
-  const [conversations, setConversations] = useState<Conversation[]>(() =>
-    loadConversations(),
-  );
+  const { isLoaded, isSignedIn, getToken, userId } = useAuth();
+
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [isConversationsLoaded, setIsConversationsLoaded] = useState(false);
 
   const [activeConversationId, setActiveConversationId] = useState<
     string | null
-  >(() => loadConversations()[0]?.id ?? null);
+  >(null);
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(
-    () => window.matchMedia("(min-width: 768px)").matches,
+    () =>
+      typeof window !== "undefined" && typeof window.matchMedia === "function"
+        ? window.matchMedia("(min-width: 768px)")?.matches ?? false
+        : false,
   );
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const requestRef = useRef<AbortController | null>(null);
+  const loadedMessagesRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!isLoaded) return;
+
+    // Cancel requests associated with the previous account.
+    requestRef.current?.abort();
+    requestRef.current = null;
+
+    // Clear conversations and cached message history.
+    setConversations([]);
+    setActiveConversationId(null);
+    setIsLoading(false);
+    setError("");
+    setIsConversationsLoaded(false);
+    loadedMessagesRef.current.clear();
+  }, [isLoaded, userId]);
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn) {
+      setConversations([]);
+      setActiveConversationId(null);
+      setIsConversationsLoaded(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function fetchConversations() {
+      setIsConversationsLoaded(false);
+      setError("");
+
+      try {
+        const savedConversations = await listConversations(getToken);
+
+        if (cancelled) return;
+
+        const mappedConversations: Conversation[] = savedConversations.map(
+          (item) => ({
+            id: `server-${item.id}`,
+            backendId: item.id,
+            title: item.title,
+            messages: [],
+            createdAt: Date.parse(item.created_at),
+            updatedAt: Date.parse(item.updated_at),
+          }),
+        );
+
+        setConversations(mappedConversations);
+        const first = mappedConversations[0];
+        setActiveConversationId(first?.id ?? null);
+        if (first?.backendId) {
+          void loadConversationMessages(first.id, first.backendId);
+        }
+      } catch (err) {
+        if (cancelled) return;
+
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Failed to load your saved conversations.",
+        );
+      } finally {
+        if (!cancelled) {
+          setIsConversationsLoaded(true);
+        }
+      }
+    }
+
+    void fetchConversations();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoaded, isSignedIn, userId, getToken]);
 
   const activeConversation =
     conversations.find(
@@ -61,14 +147,15 @@ export default function App() {
 
   const messages: Message[] = activeConversation?.messages ?? [];
 
-  // Persist conversations whenever their contents change.
   useEffect(() => {
+    if (!isConversationsLoaded) return;
+
     try {
       saveConversations(conversations);
     } catch (err) {
       console.error("Failed to persist conversations:", err);
     }
-  }, [conversations]);
+  }, [conversations, isConversationsLoaded]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -79,6 +166,58 @@ export default function App() {
       requestRef.current?.abort();
     };
   }, []);
+
+  async function loadConversationMessages(
+    localConversationId: string,
+    backendIdOverride?: string,
+  ) {
+    const conversation = conversations.find(
+      (item) => item.id === localConversationId,
+    );
+
+    const backendId = backendIdOverride ?? conversation?.backendId;
+
+    if (!backendId) {
+      return;
+    }
+
+    if (loadedMessagesRef.current.has(backendId)) {
+      return;
+    }
+
+    setError("");
+
+    try {
+      const savedMessages = await getConversationMessages(
+        backendId,
+        getToken,
+      );
+
+      loadedMessagesRef.current.add(backendId);
+
+      setConversations((previous) =>
+        previous.map((item) =>
+          item.id === localConversationId
+            ? {
+                ...item,
+                backendId,
+                messages: savedMessages.map((message) => ({
+                  id: message.id,
+                  role: message.role,
+                  content: message.content,
+                })),
+              }
+            : item,
+        ),
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load conversation messages.",
+      );
+    }
+  }
 
   function updateConversation(
     conversationId: string,
@@ -94,16 +233,39 @@ export default function App() {
     });
   }
 
-  function newChat() {
+  async function newChat() {
+    if (!isConversationsLoaded) return;
+
     requestRef.current?.abort();
     requestRef.current = null;
 
-    const conversation = createConversation();
-
-    setConversations((previous) => [conversation, ...previous]);
-    setActiveConversationId(conversation.id);
     setError("");
     setIsLoading(false);
+
+    try {
+      const saved = await createServerConversation("New Chat", getToken);
+
+      const now = Date.now();
+
+      const conversation: Conversation = {
+        id: `server-${saved.id}`,
+        backendId: saved.id,
+        title: saved.title,
+        messages: [],
+        createdAt: Date.parse(saved.created_at) || now,
+        updatedAt: Date.parse(saved.updated_at) || now,
+      };
+
+      loadedMessagesRef.current.add(saved.id);
+      setConversations((previous) => [conversation, ...previous]);
+      setActiveConversationId(conversation.id);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to create a new conversation.",
+      );
+    }
   }
 
   function stopGenerating() {
@@ -131,10 +293,15 @@ export default function App() {
     setError("");
 
     try {
-      const reply = await sendMessage(
+      const currentConversation = conversations.find(
+        (conversation) => conversation.id === conversationId,
+      );
+      const result = await sendMessage(
         content,
         history.map(({ role, content }) => ({ role, content })),
         controller.signal,
+        getToken,
+        currentConversation?.backendId,
       );
 
       if (requestRef.current !== controller) return;
@@ -142,11 +309,16 @@ export default function App() {
       const assistantMessage: Message = {
         id: crypto.randomUUID(),
         role: "assistant",
-        content: reply,
+        content: result.reply,
       };
+
+      if (result.conversation_id) {
+        loadedMessagesRef.current.add(result.conversation_id);
+      }
 
       updateConversation(conversationId, (conversation) => ({
         ...conversation,
+        backendId: result.conversation_id,
         messages: [...conversation.messages, assistantMessage],
         updatedAt: Date.now(),
       }));
@@ -231,6 +403,17 @@ export default function App() {
 
     await requestReply(activeConversationId, lastMessage.content, history);
   }
+  if (!isLoaded) {
+    return (
+      <main className="auth-screen">
+        <p>Loading authentication...</p>
+      </main>
+    );
+  }
+
+  if (!isSignedIn) {
+    return <AuthScreen />;
+  }
 
   return (
     <div className="app-shell">
@@ -252,43 +435,103 @@ export default function App() {
               setError("");
               setIsLoading(false);
 
+              void loadConversationMessages(id);
+
               if (window.matchMedia("(max-width: 767px)").matches) {
                 setSidebarOpen(false);
               }
             }}
             onDeleteConversation={(id) => {
-              const remaining = conversations.filter(
-                (conversation) => conversation.id !== id,
-              );
+              void (async () => {
+                const conversation = conversations.find(
+                  (item) => item.id === id,
+                );
 
-              setConversations(remaining);
+                if (!conversation) return;
 
-              if (activeConversationId === id) {
-                requestRef.current?.abort();
-                requestRef.current = null;
+                try {
+                  if (conversation.backendId) {
+                    await deleteConversation(conversation.backendId, getToken);
+                    loadedMessagesRef.current.delete(conversation.backendId);
+                  }
 
-                setActiveConversationId(remaining[0]?.id ?? null);
-                setError("");
-                setIsLoading(false);
-              }
+                  requestRef.current?.abort();
+                  requestRef.current = null;
+
+                  setConversations((previous) =>
+                    previous.filter((item) => item.id !== id),
+                  );
+
+                  if (activeConversationId === id) {
+                    const remaining = conversations.filter(
+                      (item) => item.id !== id,
+                    );
+
+                    setActiveConversationId(remaining[0]?.id ?? null);
+                    setError("");
+                    setIsLoading(false);
+                  }
+
+                  setError("");
+                } catch (err) {
+                  setError(
+                    err instanceof Error
+                      ? err.message
+                      : "Failed to delete conversation.",
+                  );
+                }
+              })();
             }}
             onRenameConversation={(id, title) => {
-              setConversations((previous) =>
-                previous
-                  .map((conversation) =>
-                    conversation.id === id
-                      ? {
-                          ...conversation,
-                          title: title.trim().slice(0, 100),
-                          updatedAt: Date.now(),
-                        }
-                      : conversation,
-                  )
-                  .sort((a, b) => b.updatedAt - a.updatedAt),
-              );
+              void (async () => {
+                const conversation = conversations.find(
+                  (item) => item.id === id,
+                );
+
+                const trimmedTitle = title.trim().slice(0, 100);
+
+                if (!conversation || !trimmedTitle) return;
+
+                if (!conversation.backendId) {
+                  setError(
+                    "This conversation has not been saved to the server yet.",
+                  );
+                  return;
+                }
+
+                try {
+                  const updated = await renameConversation(
+                    conversation.backendId,
+                    trimmedTitle,
+                    getToken,
+                  );
+
+                  setConversations((previous) =>
+                    previous
+                      .map((item) =>
+                        item.id === id
+                          ? {
+                              ...item,
+                              title: updated.title,
+                              updatedAt: Date.parse(updated.updated_at),
+                            }
+                          : item,
+                      )
+                      .sort((a, b) => b.updatedAt - a.updatedAt),
+                  );
+
+                  setError("");
+                } catch (err) {
+                  setError(
+                    err instanceof Error
+                      ? err.message
+                      : "Failed to rename conversation.",
+                  );
+                }
+              })();
             }}
             onNewChat={() => {
-              newChat();
+              void newChat();
 
               if (window.matchMedia("(max-width: 767px)").matches) {
                 setSidebarOpen(false);
@@ -316,7 +559,7 @@ export default function App() {
 
           <button
             className="icon-button"
-            onClick={newChat}
+            onClick={() => void newChat()}
             aria-label="New chat"
           >
             <SquarePen size={19} />
@@ -387,7 +630,9 @@ export default function App() {
 
           <div ref={bottomRef} />
         </section>
-
+        {!isConversationsLoaded && (
+          <p role="status">Loading your conversations...</p>
+        )}
         <footer className="chat-footer">
           <div className="composer-wrapper">
             <ChatInput
