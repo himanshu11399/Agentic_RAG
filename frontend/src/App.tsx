@@ -6,12 +6,45 @@ import type { Message } from "./components/ChatMessage.types";
 import ChatInput from "./components/ChatInput";
 import Sidebar from "./components/Sidebar";
 import { sendMessage } from "./services/chatApi";
+import {
+  loadConversations,
+  saveConversations,
+} from "./services/conversationStorage";
+import type { Conversation } from "./types/conversation";
 import "./App.css";
 
 const REQUEST_TIMEOUT_MS = 60_000;
 
+function createConversation(): Conversation {
+  const now = Date.now();
+
+  return {
+    id: crypto.randomUUID(),
+    title: "New chat",
+    messages: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function createTitle(message: string): string {
+  const normalized = message.trim().replace(/\s+/g, " ");
+  const maxLength = 40;
+
+  return normalized.length > maxLength
+    ? `${normalized.slice(0, maxLength - 3)}...`
+    : normalized || "New chat";
+}
+
 export default function App() {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>(() =>
+    loadConversations(),
+  );
+
+  const [activeConversationId, setActiveConversationId] = useState<
+    string | null
+  >(() => loadConversations()[0]?.id ?? null);
+
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(
@@ -20,6 +53,22 @@ export default function App() {
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const requestRef = useRef<AbortController | null>(null);
+
+  const activeConversation =
+    conversations.find(
+      (conversation) => conversation.id === activeConversationId,
+    ) ?? null;
+
+  const messages: Message[] = activeConversation?.messages ?? [];
+
+  // Persist conversations whenever their contents change.
+  useEffect(() => {
+    try {
+      saveConversations(conversations);
+    } catch (err) {
+      console.error("Failed to persist conversations:", err);
+    }
+  }, [conversations]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -31,18 +80,41 @@ export default function App() {
     };
   }, []);
 
+  function updateConversation(
+    conversationId: string,
+    update: (conversation: Conversation) => Conversation,
+  ) {
+    setConversations((previous) => {
+      const updated = previous.map((conversation) =>
+        conversation.id === conversationId
+          ? update(conversation)
+          : conversation,
+      );
+      return updated.sort((a, b) => b.updatedAt - a.updatedAt);
+    });
+  }
+
   function newChat() {
     requestRef.current?.abort();
     requestRef.current = null;
 
-    setMessages([]);
+    const conversation = createConversation();
+
+    setConversations((previous) => [conversation, ...previous]);
+    setActiveConversationId(conversation.id);
     setError("");
     setIsLoading(false);
   }
+
   function stopGenerating() {
     requestRef.current?.abort();
   }
-  async function requestReply(content: string, history: Message[]) {
+
+  async function requestReply(
+    conversationId: string,
+    content: string,
+    history: Message[],
+  ) {
     if (requestRef.current) return;
 
     const controller = new AbortController();
@@ -67,14 +139,17 @@ export default function App() {
 
       if (requestRef.current !== controller) return;
 
-      setMessages((previous) => [
-        ...previous,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: reply,
-        },
-      ]);
+      const assistantMessage: Message = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: reply,
+      };
+
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        messages: [...conversation.messages, assistantMessage],
+        updatedAt: Date.now(),
+      }));
     } catch (err) {
       if (requestRef.current !== controller) return;
 
@@ -100,22 +175,48 @@ export default function App() {
   async function handleSend(content: string) {
     if (requestRef.current || !content.trim()) return;
 
-    const history = messages.slice(-20);
+    let conversationId = activeConversationId;
 
-    setMessages((previous) => [
-      ...previous,
-      {
-        id: crypto.randomUUID(),
-        role: "user",
-        content: content.trim(),
-      },
-    ]);
+    // Create a conversation automatically when the user starts chatting.
+    if (
+      !conversationId ||
+      !conversations.some((conversation) => conversation.id === conversationId)
+    ) {
+      const conversation = createConversation();
 
-    await requestReply(content.trim(), history);
+      conversationId = conversation.id;
+      setConversations((previous) => [conversation, ...previous]);
+      setActiveConversationId(conversation.id);
+    }
+
+    const trimmedContent = content.trim();
+    const currentConversation = conversations.find(
+      (conversation) => conversation.id === conversationId,
+    );
+
+    const history = (currentConversation?.messages ?? []).slice(-20);
+
+    const userMessage: Message = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: trimmedContent,
+    };
+
+    updateConversation(conversationId, (conversation) => ({
+      ...conversation,
+      title:
+        conversation.messages.length === 0
+          ? createTitle(trimmedContent)
+          : conversation.title,
+      messages: [...conversation.messages, userMessage],
+      updatedAt: Date.now(),
+    }));
+
+    await requestReply(conversationId, trimmedContent, history);
   }
 
   async function retryLastMessage() {
-    if (requestRef.current) return;
+    if (requestRef.current || !activeConversationId) return;
 
     const lastIndex = messages.length - 1;
     const lastMessage = messages[lastIndex];
@@ -128,7 +229,7 @@ export default function App() {
     // Exclude the failed message itself to avoid sending it twice.
     const history = messages.slice(0, lastIndex).slice(-20);
 
-    await requestReply(lastMessage.content, history);
+    await requestReply(activeConversationId, lastMessage.content, history);
   }
 
   return (
@@ -140,8 +241,52 @@ export default function App() {
             aria-label="Close sidebar overlay"
             onClick={() => setSidebarOpen(false)}
           />
-
           <Sidebar
+            conversations={conversations}
+            activeConversationId={activeConversationId}
+            onSelectConversation={(id) => {
+              requestRef.current?.abort();
+              requestRef.current = null;
+
+              setActiveConversationId(id);
+              setError("");
+              setIsLoading(false);
+
+              if (window.matchMedia("(max-width: 767px)").matches) {
+                setSidebarOpen(false);
+              }
+            }}
+            onDeleteConversation={(id) => {
+              const remaining = conversations.filter(
+                (conversation) => conversation.id !== id,
+              );
+
+              setConversations(remaining);
+
+              if (activeConversationId === id) {
+                requestRef.current?.abort();
+                requestRef.current = null;
+
+                setActiveConversationId(remaining[0]?.id ?? null);
+                setError("");
+                setIsLoading(false);
+              }
+            }}
+            onRenameConversation={(id, title) => {
+              setConversations((previous) =>
+                previous
+                  .map((conversation) =>
+                    conversation.id === id
+                      ? {
+                          ...conversation,
+                          title: title.trim().slice(0, 100),
+                          updatedAt: Date.now(),
+                        }
+                      : conversation,
+                  )
+                  .sort((a, b) => b.updatedAt - a.updatedAt),
+              );
+            }}
             onNewChat={() => {
               newChat();
 
@@ -166,7 +311,7 @@ export default function App() {
             </button>
 
             <span className="topbar-title">AI Assistant</span>
-            <span className="model-label">V1</span>
+            <span className="model-label">V3</span>
           </div>
 
           <button

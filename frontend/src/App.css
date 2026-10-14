@@ -735,3 +735,202 @@
   outline-offset: 2px;
 }
 
+.conversation-history-label {
+  margin-top: 24px;
+}
+
+.conversation-history {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 10px;
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
+}
+
+.empty-history {
+  padding: 10px;
+  color: #9ca3af;
+  font-size: 13px;
+}
+
+.conversation-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 3px;
+  border-radius: 8px;
+  color: #eeeeee;
+}
+
+.conversation-item:hover {
+  background: #31363f;
+}
+
+.conversation-item.active {
+  background: #31363f;
+  outline: 1px solid #76abae;
+}
+
+.conversation-select {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 1;
+  min-width: 0;
+  padding: 9px 7px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.conversation-select span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+}
+
+.conversation-delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 7px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+}
+
+.conversation-delete:hover {
+  background: #454b55;
+  color: #eeeeee;
+}
+
+.conversation-select:focus-visible,
+.conversation-delete:focus-visible {
+  outline: 2px solid #76abae;
+  outline-offset: 2px;
+}
+
+/* Keep the application within the viewport */
+.app-shell {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Keep the main chat area constrained */
+.chat-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Keep the header fixed */
+.topbar {
+  flex-shrink: 0;
+}
+
+/* Only the conversation area should scroll */
+.conversation {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+/* Prevent long messages from stretching the layout */
+.message-list {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.message-list > * {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+/* Keep the composer at the bottom */
+.chat-footer {
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+/* Handle long code blocks and Markdown content */
+.message-list pre {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.message-list img,
+.message-list table {
+  max-width: 100%;
+}
+
+.message-list table {
+  display: block;
+  overflow-x: auto;
+}
+
+/* Prevent the page itself from scrolling */
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  overflow: hidden;
+}
+
+.conversation-rename-input {
+  flex: 1;
+  width: 0;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid #76abae;
+  border-radius: 6px;
+  outline: none;
+  background: #222831;
+  color: #eeeeee;
+  font: inherit;
+  font-size: 13px;
+}
+
+.conversation-rename-input:focus {
+  box-shadow: 0 0 0 2px rgb(118 171 174 / 20%);
+}
+
+.conversation-rename-input {
+  flex: 1;
+  width: 0;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid #76abae;
+  border-radius: 6px;
+  outline: none;
+  background: #222831;
+  color: #eeeeee;
+  font: inherit;
+  font-size: 13px;
+}
+
+.conversation-rename-input:focus {
+  box-shadow: 0 0 0 2px rgb(118 171 174 / 20%);
+}
