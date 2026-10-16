@@ -1,5 +1,5 @@
 import { useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ArrowUp, LoaderCircle } from "lucide-react";
+import { ArrowUp, LoaderCircle, PlusCircle } from "lucide-react";
 
 interface ChatInputProps {
   onSend: (message: string) => void;
@@ -20,8 +20,8 @@ export default function ChatInput({ onSend, isLoading }: ChatInputProps) {
     if (!textarea) return;
 
     textarea.style.height = "auto";
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
-    textarea.style.overflowY = textarea.scrollHeight > 200 ? "auto" : "hidden";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px`;
+    textarea.style.overflowY = textarea.scrollHeight > 160 ? "auto" : "hidden";
   }
 
   function handleChange(value: string) {
@@ -57,11 +57,20 @@ export default function ChatInput({ onSend, isLoading }: ChatInputProps) {
   }
 
   return (
-    <form ref={formRef} className="composer" onSubmit={handleSubmit}>
+    <form ref={formRef} className="pill-composer" onSubmit={handleSubmit}>
+      <button
+        type="button"
+        className="composer-add-btn"
+        aria-label="Commands and attachments"
+        title="Commands"
+      >
+        <PlusCircle size={20} />
+      </button>
+
       <textarea
         ref={textareaRef}
         aria-label="Message your AI assistant"
-        placeholder="Message your AI assistant..."
+        placeholder="Type '/' for commands"
         value={message}
         onChange={(event) => handleChange(event.target.value)}
         onKeyDown={handleKeyDown}
@@ -72,15 +81,15 @@ export default function ChatInput({ onSend, isLoading }: ChatInputProps) {
 
       <button
         type="submit"
-        className="send-button"
+        className="green-send-btn"
         aria-label={isLoading ? "Sending message" : "Send message"}
         title={isLoading ? "Sending message..." : "Send message"}
         disabled={!canSend}
       >
         {isLoading ? (
-          <LoaderCircle className="spin" size={19} />
+          <LoaderCircle className="spin" size={17} />
         ) : (
-          <ArrowUp size={20} />
+          <ArrowUp size={18} />
         )}
       </button>
     </form>

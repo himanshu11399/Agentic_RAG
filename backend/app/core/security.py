@@ -1,3 +1,4 @@
+import logging
 from functools import lru_cache
 from typing import Any
 
@@ -5,6 +6,8 @@ import jwt
 from jwt import PyJWKClient, PyJWTError
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 class AuthenticationError(Exception):
     """Raised when access token cannot be authenticated."""
@@ -32,12 +35,17 @@ def verify_clerk_token(token:str)->dict[str,Any]:
             "verify_iss":True,
             "verify_aud":bool(settings.CLERK_AUDIENCE),
         }
+
+        # Allow issuer with or without trailing slash
+        clean_issuer = settings.CLERK_ISSUER.rstrip("/")
+        valid_issuers = [clean_issuer, f"{clean_issuer}/"]
         
         decode_args: dict[str, Any] = {
             "key": signing_key.key,
             "algorithms": ["RS256"],
-            "issuer": settings.CLERK_ISSUER,
+            "issuer": valid_issuers,
             "options": options,
+            "leeway": 60,
         }
         if settings.CLERK_AUDIENCE:
             decode_args["audience"] = settings.CLERK_AUDIENCE
@@ -52,10 +60,12 @@ def verify_clerk_token(token:str)->dict[str,Any]:
     except AuthenticationError:
         raise
     except (PyJWTError, ValueError) as exc:
-        raise AuthenticationError("Invalid or expired access token") from exc
+        logger.warning("Clerk token verification failed: %s - %s", type(exc).__name__, exc)
+        raise AuthenticationError(f"Invalid or expired access token: {exc}") from exc
     except Exception as exc:
         # Includes JWKS retrieval failures. Never accept a token if
         # its signature could not be verified.
-        raise AuthenticationError("Unable to verify access token") from exc   
+        logger.exception("Unexpected error during Clerk token verification: %s", exc)
+        raise AuthenticationError("Unable to verify access token") from exc
 
     

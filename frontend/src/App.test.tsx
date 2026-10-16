@@ -31,6 +31,14 @@ vi.mock("@clerk/react", () => ({
     getToken: mockGetToken,
     userId: "test-user",
   }),
+  useUser: () => ({
+    user: {
+      fullName: "S J A Siam",
+      primaryEmailAddress: { emailAddress: "sja.siam@skiff.com" },
+      imageUrl: "/avatar.jpg",
+    },
+  }),
+  UserButton: () => <div data-testid="user-button" />,
 }));
 
 const mockedSendMessage = vi.mocked(sendMessage);

@@ -30,6 +30,6 @@ def get_current_user(
     except AuthenticationError as exc:
         raise HTTPException(
             status_code=401,
-            detail="Invalid or expired access token",
+            detail=str(exc) or "Invalid or expired access token",
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc

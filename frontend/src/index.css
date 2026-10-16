@@ -1,16 +1,13 @@
-
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap");
 
 :root {
-  font-family: "Inter", sans-serif;
-  color: #eeeeee;
-  background: #222831;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: #111827;
+  background: #121316;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  font-optical-sizing: auto;
-  font-weight: 400;
 }
 
 * {
@@ -19,11 +16,14 @@
 
 body {
   margin: 0;
+  padding: 0;
   min-width: 320px;
   min-height: 100vh;
+  background: #121316;
+  overflow: hidden;
 }
 
-button, textarea {
+button, textarea, input {
   font: inherit;
 }
 
@@ -36,12 +36,12 @@ button:disabled {
   opacity: 0.55;
 }
 
-button:focus-visible, textarea:focus-visible {
-  outline: 2px solid #76abae;
+button:focus-visible, textarea:focus-visible, input:focus-visible {
+  outline: 2px solid #10a37f;
   outline-offset: 2px;
 }
 
 ::selection {
-  background: #76abae;
-  color: #222831;
+  background: #10a37f;
+  color: #ffffff;
 }

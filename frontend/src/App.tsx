@@ -1,7 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import { Menu, Sparkles, SquarePen, Square } from "lucide-react";
+import {
+  Bookmark,
+  ChevronLeft,
+  History,
+  Menu,
+  Plus,
+  Printer,
+  Share2,
+  Sparkles,
+  Sun,
+  Square,
+} from "lucide-react";
 
-import { useAuth } from "@clerk/react";
+import { useAuth, useUser, UserButton } from "@clerk/react";
 import AuthScreen from "./components/AuthScreen";
 
 import ChatMessage from "./components/ChatMessage";
@@ -16,7 +27,6 @@ import {
   renameConversation,
   sendMessage,
 } from "./services/chatApi";
-import { saveConversations } from "./services/conversationStorage";
 import type { Conversation } from "./types/conversation";
 import "./App.css";
 
@@ -45,6 +55,7 @@ function createTitle(message: string): string {
 
 export default function App() {
   const { isLoaded, isSignedIn, getToken, userId } = useAuth();
+  const { user } = useUser();
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [isConversationsLoaded, setIsConversationsLoaded] = useState(false);
@@ -148,94 +159,127 @@ export default function App() {
   const messages: Message[] = activeConversation?.messages ?? [];
 
   useEffect(() => {
-    if (!isConversationsLoaded) return;
-
-    try {
-      saveConversations(conversations);
-    } catch (err) {
-      console.error("Failed to persist conversations:", err);
-    }
-  }, [conversations, isConversationsLoaded]);
-
-  useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isLoading]);
 
-  useEffect(() => {
-    return () => {
-      requestRef.current?.abort();
-    };
-  }, []);
-
   async function loadConversationMessages(
-    localConversationId: string,
-    backendIdOverride?: string,
+    conversationId: string,
+    backendId?: string,
   ) {
-    const conversation = conversations.find(
-      (item) => item.id === localConversationId,
-    );
+    if (loadedMessagesRef.current.has(conversationId)) return;
 
-    const backendId = backendIdOverride ?? conversation?.backendId;
+    const targetBackendId =
+      backendId ??
+      conversations.find((item) => item.id === conversationId)?.backendId;
 
-    if (!backendId) {
-      return;
-    }
-
-    if (loadedMessagesRef.current.has(backendId)) {
-      return;
-    }
-
-    setError("");
+    if (!targetBackendId) return;
 
     try {
-      const savedMessages = await getConversationMessages(
-        backendId,
+      const serverMessages = await getConversationMessages(
+        targetBackendId,
         getToken,
       );
 
-      loadedMessagesRef.current.add(backendId);
+      loadedMessagesRef.current.add(conversationId);
 
       setConversations((previous) =>
-        previous.map((item) =>
-          item.id === localConversationId
-            ? {
-                ...item,
-                backendId,
-                messages: savedMessages.map((message) => ({
-                  id: message.id,
-                  role: message.role,
-                  content: message.content,
-                })),
-              }
-            : item,
-        ),
+        previous.map((conversation) => {
+          if (conversation.id !== conversationId) {
+            return conversation;
+          }
+
+          return {
+            ...conversation,
+            messages: serverMessages.map((msg) => ({
+              id: msg.id,
+              role: msg.role,
+              content: msg.content,
+              timestamp: Date.parse(msg.created_at),
+            })),
+          };
+        }),
       );
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : "Failed to load conversation messages.",
+          : "Failed to load messages for this conversation.",
       );
     }
   }
 
-  function updateConversation(
+  async function requestReply(
     conversationId: string,
-    update: (conversation: Conversation) => Conversation,
+    messageText: string,
+    history: Message[],
   ) {
-    setConversations((previous) => {
-      const updated = previous.map((conversation) =>
-        conversation.id === conversationId
-          ? update(conversation)
-          : conversation,
+    const controller = new AbortController();
+    requestRef.current = controller;
+
+    const timeoutId = window.setTimeout(() => {
+      controller.abort();
+    }, REQUEST_TIMEOUT_MS);
+
+    setIsLoading(true);
+    setError("");
+
+    try {
+      const currentConversation = conversations.find(
+        (item) => item.id === conversationId,
       );
-      return updated.sort((a, b) => b.updatedAt - a.updatedAt);
-    });
+
+      const targetBackendId = currentConversation?.backendId;
+
+      const data = await sendMessage(
+        messageText,
+        history.map((item) => ({
+          role: item.role,
+          content: item.content,
+        })),
+        controller.signal,
+        getToken,
+        targetBackendId,
+      );
+
+      const assistantMessage: Message = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: data.reply,
+        timestamp: Date.now(),
+      };
+
+      setConversations((previous) =>
+        previous.map((conversation) => {
+          if (conversation.id !== conversationId) {
+            return conversation;
+          }
+
+          return {
+            ...conversation,
+            backendId: conversation.backendId ?? data.conversation_id,
+            messages: [...conversation.messages, assistantMessage],
+            updatedAt: Date.now(),
+          };
+        }),
+      );
+    } catch (err) {
+      if (controller.signal.aborted) {
+        setError("The request timed out or was cancelled. Please try again.");
+      } else {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "An unexpected error occurred while generating a reply.",
+        );
+      }
+    } finally {
+      window.clearTimeout(timeoutId);
+      requestRef.current = null;
+      setIsLoading(false);
+    }
   }
 
   async function newChat() {
-    if (!isConversationsLoaded) return;
-
     requestRef.current?.abort();
     requestRef.current = null;
 
@@ -245,164 +289,142 @@ export default function App() {
     try {
       const saved = await createServerConversation("New Chat", getToken);
 
-      const now = Date.now();
-
-      const conversation: Conversation = {
+      const serverConversation: Conversation = {
         id: `server-${saved.id}`,
         backendId: saved.id,
         title: saved.title,
         messages: [],
-        createdAt: Date.parse(saved.created_at) || now,
-        updatedAt: Date.parse(saved.updated_at) || now,
+        createdAt: Date.parse(saved.created_at),
+        updatedAt: Date.parse(saved.updated_at),
       };
 
-      loadedMessagesRef.current.add(saved.id);
-      setConversations((previous) => [conversation, ...previous]);
-      setActiveConversationId(conversation.id);
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Failed to create a new conversation.",
-      );
+      setConversations((previous) => [
+        serverConversation,
+        ...previous.filter((item) => item.id !== serverConversation.id),
+      ]);
+      setActiveConversationId(serverConversation.id);
+    } catch {
+      const fallback = createConversation();
+      setConversations((previous) => [fallback, ...previous]);
+      setActiveConversationId(fallback.id);
     }
   }
 
-  function stopGenerating() {
-    requestRef.current?.abort();
-  }
+  async function handleSend(messageText: string) {
+    let targetConversationId = activeConversationId;
+    let isBrandNewChat = false;
 
-  async function requestReply(
-    conversationId: string,
-    content: string,
-    history: Message[],
-  ) {
-    if (requestRef.current) return;
+    if (!targetConversationId) {
+      try {
+        const saved = await createServerConversation(
+          createTitle(messageText),
+          getToken,
+        );
 
-    const controller = new AbortController();
-    requestRef.current = controller;
+        const serverConversation: Conversation = {
+          id: `server-${saved.id}`,
+          backendId: saved.id,
+          title: saved.title,
+          messages: [],
+          createdAt: Date.parse(saved.created_at),
+          updatedAt: Date.parse(saved.updated_at),
+        };
 
-    let timedOut = false;
+        setConversations((previous) => [
+          serverConversation,
+          ...previous.filter((item) => item.id !== serverConversation.id),
+        ]);
+        setActiveConversationId(serverConversation.id);
+        targetConversationId = serverConversation.id;
+        isBrandNewChat = true;
+      } catch {
+        const fallback = createConversation();
+        fallback.title = createTitle(messageText);
 
-    const timeoutId = window.setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, REQUEST_TIMEOUT_MS);
-
-    setIsLoading(true);
-    setError("");
-
-    try {
-      const currentConversation = conversations.find(
-        (conversation) => conversation.id === conversationId,
-      );
-      const result = await sendMessage(
-        content,
-        history.map(({ role, content }) => ({ role, content })),
-        controller.signal,
-        getToken,
-        currentConversation?.backendId,
-      );
-
-      if (requestRef.current !== controller) return;
-
-      const assistantMessage: Message = {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content: result.reply,
-      };
-
-      if (result.conversation_id) {
-        loadedMessagesRef.current.add(result.conversation_id);
-      }
-
-      updateConversation(conversationId, (conversation) => ({
-        ...conversation,
-        backendId: result.conversation_id,
-        messages: [...conversation.messages, assistantMessage],
-        updatedAt: Date.now(),
-      }));
-    } catch (err) {
-      if (requestRef.current !== controller) return;
-
-      if (controller.signal.aborted && !timedOut) return;
-
-      setError(
-        timedOut
-          ? "The request timed out. Please try again."
-          : err instanceof Error
-            ? err.message
-            : "Something went wrong. Please try again.",
-      );
-    } finally {
-      window.clearTimeout(timeoutId);
-
-      if (requestRef.current === controller) {
-        requestRef.current = null;
-        setIsLoading(false);
+        setConversations((previous) => [fallback, ...previous]);
+        setActiveConversationId(fallback.id);
+        targetConversationId = fallback.id;
+        isBrandNewChat = true;
       }
     }
-  }
 
-  async function handleSend(content: string) {
-    if (requestRef.current || !content.trim()) return;
-
-    let conversationId = activeConversationId;
-
-    // Create a conversation automatically when the user starts chatting.
-    if (
-      !conversationId ||
-      !conversations.some((conversation) => conversation.id === conversationId)
-    ) {
-      const conversation = createConversation();
-
-      conversationId = conversation.id;
-      setConversations((previous) => [conversation, ...previous]);
-      setActiveConversationId(conversation.id);
-    }
-
-    const trimmedContent = content.trim();
-    const currentConversation = conversations.find(
-      (conversation) => conversation.id === conversationId,
-    );
-
-    const history = (currentConversation?.messages ?? []).slice(-20);
+    const currentTarget = targetConversationId;
+    if (!currentTarget) return;
 
     const userMessage: Message = {
       id: crypto.randomUUID(),
       role: "user",
-      content: trimmedContent,
+      content: messageText,
+      timestamp: Date.now(),
     };
 
-    updateConversation(conversationId, (conversation) => ({
-      ...conversation,
-      title:
-        conversation.messages.length === 0
-          ? createTitle(trimmedContent)
-          : conversation.title,
-      messages: [...conversation.messages, userMessage],
-      updatedAt: Date.now(),
-    }));
+    const currentConversation = conversations.find(
+      (item) => item.id === currentTarget,
+    );
 
-    await requestReply(conversationId, trimmedContent, history);
+    const history = currentConversation ? currentConversation.messages : [];
+
+    setConversations((previous) =>
+      previous.map((conversation) => {
+        if (conversation.id !== currentTarget) {
+          return conversation;
+        }
+
+        const shouldUpdateTitle =
+          conversation.messages.length === 0 && !isBrandNewChat;
+
+        return {
+          ...conversation,
+          title: shouldUpdateTitle
+            ? createTitle(messageText)
+            : conversation.title,
+          messages: [...conversation.messages, userMessage],
+          updatedAt: Date.now(),
+        };
+      }),
+    );
+
+    await requestReply(currentTarget, messageText, history);
+  }
+
+  function stopGenerating() {
+    requestRef.current?.abort();
+    requestRef.current = null;
+    setIsLoading(false);
   }
 
   async function retryLastMessage() {
-    if (requestRef.current || !activeConversationId) return;
+    if (!activeConversationId || isLoading) return;
 
-    const lastIndex = messages.length - 1;
+    const conversation = conversations.find(
+      (item) => item.id === activeConversationId,
+    );
+
+    if (!conversation) return;
+
+    const messages = conversation.messages;
+    const lastIndex = messages.findLastIndex((msg) => msg.role === "user");
+
+    if (lastIndex === -1) return;
+
     const lastMessage = messages[lastIndex];
 
-    // Retry only when the latest message is a failed user message.
-    if (!lastMessage || lastMessage.role !== "user" || !error) {
-      return;
-    }
+    setConversations((previous) =>
+      previous.map((item) => {
+        if (item.id !== activeConversationId) return item;
 
-    // Exclude the failed message itself to avoid sending it twice.
+        return {
+          ...item,
+          messages: item.messages.slice(0, lastIndex + 1),
+        };
+      }),
+    );
+
     const history = messages.slice(0, lastIndex).slice(-20);
 
     await requestReply(activeConversationId, lastMessage.content, history);
   }
+
   if (!isLoaded) {
     return (
       <main className="auth-screen">
@@ -415,8 +437,12 @@ export default function App() {
     return <AuthScreen />;
   }
 
+  const displayName = user?.fullName || "S J A Siam";
+  const displayEmail = user?.primaryEmailAddress?.emailAddress || "sja.siam@skiff.com";
+  const avatarUrl = user?.imageUrl || "/avatar.jpg";
+
   return (
-    <div className="app-shell">
+    <div className="app-shell-dark">
       {sidebarOpen && (
         <>
           <button
@@ -427,6 +453,9 @@ export default function App() {
           <Sidebar
             conversations={conversations}
             activeConversationId={activeConversationId}
+            userName={displayName}
+            userEmail={displayEmail}
+            userAvatar={avatarUrl}
             onSelectConversation={(id) => {
               requestRef.current?.abort();
               requestRef.current = null;
@@ -449,52 +478,50 @@ export default function App() {
 
                 if (!conversation) return;
 
-                try {
-                  if (conversation.backendId) {
+                if (conversation.backendId) {
+                  try {
                     await deleteConversation(conversation.backendId, getToken);
-                    loadedMessagesRef.current.delete(conversation.backendId);
+                  } catch (err) {
+                    setError(
+                      err instanceof Error
+                        ? err.message
+                        : "Failed to delete conversation.",
+                    );
+                    return;
                   }
+                }
 
-                  requestRef.current?.abort();
-                  requestRef.current = null;
-
-                  setConversations((previous) =>
-                    previous.filter((item) => item.id !== id),
-                  );
+                setConversations((previous) => {
+                  const updated = previous.filter((item) => item.id !== id);
 
                   if (activeConversationId === id) {
-                    const remaining = conversations.filter(
-                      (item) => item.id !== id,
-                    );
-
-                    setActiveConversationId(remaining[0]?.id ?? null);
-                    setError("");
-                    setIsLoading(false);
+                    const nextActive = updated[0]?.id ?? null;
+                    setActiveConversationId(nextActive);
+                    if (nextActive) {
+                      void loadConversationMessages(nextActive);
+                    }
                   }
 
-                  setError("");
-                } catch (err) {
-                  setError(
-                    err instanceof Error
-                      ? err.message
-                      : "Failed to delete conversation.",
-                  );
-                }
+                  return updated;
+                });
               })();
             }}
-            onRenameConversation={(id, title) => {
+            onRenameConversation={(id, newTitle) => {
               void (async () => {
+                const trimmedTitle = newTitle.trim();
+                if (!trimmedTitle) return;
+
                 const conversation = conversations.find(
                   (item) => item.id === id,
                 );
 
-                const trimmedTitle = title.trim().slice(0, 100);
-
-                if (!conversation || !trimmedTitle) return;
+                if (!conversation) return;
 
                 if (!conversation.backendId) {
-                  setError(
-                    "This conversation has not been saved to the server yet.",
+                  setConversations((previous) =>
+                    previous.map((item) =>
+                      item.id === id ? { ...item, title: trimmedTitle } : item,
+                    ),
                   );
                   return;
                 }
@@ -542,50 +569,109 @@ export default function App() {
         </>
       )}
 
-      <main className="chat-main">
-        <header className="topbar">
-          <div className="topbar-left">
+      {/* Main White Chat Canvas Card */}
+      <main className="chat-card-container">
+        {/* Top Bar */}
+        <header className="chat-card-topbar">
+          <div className="topbar-left-group">
             <button
-              className="icon-button"
+              className="mobile-menu-btn"
               onClick={() => setSidebarOpen((open) => !open)}
               aria-label="Toggle sidebar"
             >
-              <Menu size={20} />
+              <Menu size={18} />
             </button>
 
-            <span className="topbar-title">AI Assistant</span>
-            <span className="model-label">V3</span>
+            <button
+              type="button"
+              className="new-chat-pill-btn"
+              onClick={() => void newChat()}
+              aria-label="New chat"
+            >
+              <Plus size={15} className="new-chat-plus" />
+              <span>New chat</span>
+            </button>
+
+            <button
+              type="button"
+              className="topbar-icon-btn history-btn"
+              aria-label="History"
+              title="Chat History"
+            >
+              <History size={16} />
+            </button>
           </div>
 
-          <button
-            className="icon-button"
-            onClick={() => void newChat()}
-            aria-label="New chat"
-          >
-            <SquarePen size={19} />
-          </button>
+          <div className="topbar-right-group">
+            {/* Theme Toggle Switch */}
+            <div className="theme-toggle-wrap" title="Theme">
+              <Sun size={16} className="sun-icon" />
+              <div className="toggle-track-pill">
+                <div className="toggle-knob" />
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <button
+              type="button"
+              className="topbar-action-square"
+              aria-label="Bookmarks"
+              title="Bookmarks"
+            >
+              <Bookmark size={15} />
+            </button>
+
+            <button
+              type="button"
+              className="topbar-action-square"
+              aria-label="Print"
+              title="Print"
+            >
+              <Printer size={15} />
+            </button>
+
+            <button
+              type="button"
+              className="topbar-action-square"
+              aria-label="Share"
+              title="Share"
+            >
+              <Share2 size={15} />
+            </button>
+
+            {/* Clerk User Button */}
+            <div className="user-button-wrapper">
+              <UserButton />
+            </div>
+          </div>
         </header>
 
-        <section className="conversation" aria-live="polite">
+        {/* Floating Right Collapse Chevron Tab */}
+        <div className="right-collapse-tab" aria-hidden="true">
+          <ChevronLeft size={14} />
+        </div>
+
+        {/* Conversation Message Stream */}
+        <section className="chat-canvas-stream" aria-live="polite">
           {messages.length === 0 ? (
-            <div className="welcome">
-              <div className="welcome-icon">
-                <Sparkles size={28} />
+            <div className="welcome-chatgpt">
+              <div className="welcome-chatgpt-badge">
+                <Sparkles size={24} />
               </div>
 
               <h1>How can I help you today?</h1>
               <p>Your AI assistant is ready. Ask a question to get started.</p>
 
-              <div className="suggestion-grid">
+              <div className="welcome-suggestion-grid">
                 {[
-                  "Explain how APIs work",
-                  "Help me debug some code",
-                  "Explain LangGraph simply",
-                  "Give me a Python learning plan",
+                  "Write code (HTML, CSS and JS) for a simple welcome page",
+                  "Explain how APIs work in simple terms",
+                  "Explain LangGraph simply and step-by-step",
+                  "Give me a Python learning plan with projects",
                 ].map((suggestion) => (
                   <button
                     key={suggestion}
-                    className="suggestion-card"
+                    className="welcome-card"
                     onClick={() => void handleSend(suggestion)}
                     disabled={isLoading}
                   >
@@ -595,15 +681,24 @@ export default function App() {
               </div>
             </div>
           ) : (
-            <div className="message-list">
+            <div className="message-flow">
               {messages.map((message) => (
-                <ChatMessage key={message.id} message={message} />
+                <ChatMessage
+                  key={message.id}
+                  message={message}
+                  userAvatarUrl={avatarUrl}
+                  onRegenerate={
+                    message.role === "assistant"
+                      ? () => void retryLastMessage()
+                      : undefined
+                  }
+                />
               ))}
             </div>
           )}
 
           {isLoading && (
-            <div className="loading-indicator" role="status">
+            <div className="loading-chat-indicator" role="status">
               <span className="typing-dot" />
               <span className="typing-dot" />
               <span className="typing-dot" />
@@ -611,11 +706,11 @@ export default function App() {
 
               <button
                 type="button"
-                className="stop-generating-button"
+                className="stop-gen-btn"
                 onClick={stopGenerating}
                 aria-label="Stop generating"
               >
-                <Square size={13} />
+                <Square size={12} />
                 <span>Stop</span>
               </button>
             </div>
@@ -630,19 +725,18 @@ export default function App() {
 
           <div ref={bottomRef} />
         </section>
+
         {!isConversationsLoaded && (
-          <p role="status">Loading your conversations...</p>
+          <p role="status" className="sr-only">Loading your conversations...</p>
         )}
-        <footer className="chat-footer">
-          <div className="composer-wrapper">
+
+        {/* Bottom Composer */}
+        <footer className="chat-canvas-footer">
+          <div className="composer-container">
             <ChatInput
               onSend={(message) => void handleSend(message)}
               isLoading={isLoading}
             />
-
-            <p className="disclaimer">
-              AI can make mistakes. Verify important information.
-            </p>
           </div>
         </footer>
       </main>
